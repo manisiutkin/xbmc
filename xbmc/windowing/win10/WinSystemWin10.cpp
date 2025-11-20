@@ -13,6 +13,7 @@
 #include "WinEventsWin10.h"
 #include "application/Application.h"
 #include "cores/AudioEngine/AESinkFactory.h"
+#include "cores/AudioEngine/Sinks/AESinkASIO.h"
 #include "cores/AudioEngine/Sinks/AESinkWASAPI.h"
 #include "cores/AudioEngine/Sinks/AESinkXAudio.h"
 #include "rendering/dx/DirectXHelper.h"
@@ -64,6 +65,7 @@ CWinSystemWin10::CWinSystemWin10()
   m_winEvents.reset(new CWinEventsWin10());
 
   AE::CAESinkFactory::ClearSinks();
+  CAESinkASIO::Register();
   CAESinkXAudio::Register();
   CAESinkWASAPI::Register();
   CScreenshotSurfaceWindows::Register();

@@ -3,6 +3,10 @@ if(WIN32)
   cmake_minimum_required(VERSION 3.28)
 endif()
 
+if(WIN32)
+  include_directories($ENV{ASIO_SDK}/common)
+endif()
+
 project(kodi LANGUAGES CXX C ASM)
 
 if(POLICY CMP0069)

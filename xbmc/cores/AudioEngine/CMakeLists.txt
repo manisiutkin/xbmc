@@ -102,11 +102,13 @@ if(TARGET ${APP_NAME_LC}::FFMPEG)
 endif()
 
 if(CORE_SYSTEM_NAME MATCHES windows)
-  list(APPEND SOURCES Sinks/AESinkWASAPI.cpp
+  list(APPEND SOURCES Sinks/AESinkASIO.cpp
+                      Sinks/AESinkWASAPI.cpp
                       Sinks/AESinkXAudio.cpp
                       Sinks/windows/AESinkFactoryWin.cpp
                       Sinks/windows/AESinkFactoryWinRT.cpp)
-  list(APPEND HEADERS Sinks/AESinkWASAPI.h
+  list(APPEND HEADERS Sinks/AESinkASIO.h
+                      Sinks/AESinkWASAPI.h
                       Sinks/AESinkXAudio.h
                       Sinks/windows/AESinkFactoryWin.h)
 
