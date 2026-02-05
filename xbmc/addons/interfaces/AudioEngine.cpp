@@ -228,6 +228,8 @@ AEDataFormat Interface_AudioEngine::TranslateAEFormatToKodi(AudioEngineDataForma
       return AE_FMT_DOUBLEP;
     case AUDIOENGINE_FMT_FLOATP:
       return AE_FMT_FLOATP;
+    case AUDIOENGINE_FMT_DSD:
+      return AE_FMT_DSD;
     case AUDIOENGINE_FMT_MAX:
       return AE_FMT_MAX;
     case AUDIOENGINE_FMT_INVALID:
@@ -290,6 +292,8 @@ AudioEngineDataFormat Interface_AudioEngine::TranslateAEFormatToAddon(AEDataForm
       return AUDIOENGINE_FMT_DOUBLEP;
     case AE_FMT_FLOATP:
       return AUDIOENGINE_FMT_FLOATP;
+    case AE_FMT_DSD:
+      return AUDIOENGINE_FMT_DSD;
     case AE_FMT_MAX:
       return AUDIOENGINE_FMT_MAX;
     case AE_FMT_INVALID:

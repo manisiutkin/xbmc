@@ -113,9 +113,11 @@ unsigned int CAEUtil::DataFormatToBits(const enum AEDataFormat dataFormat)
     32,                  /* S24NEP */
     32,                  /* S24NERP*/
     24,                  /* S24NE3P*/
-    sizeof(double) << 3, /* DOUBLEP */
-    sizeof(float ) << 3  /* FLOATP  */
- };
+    sizeof(double) << 3, /* DOUBLE */
+    sizeof(float ) << 3, /* FLOATP */
+
+     8                   /* DSD    */
+  };
 
   return formats[dataFormat];
 }
@@ -208,7 +210,11 @@ const char* CAEUtil::DataFormatToStr(const enum AEDataFormat dataFormat)
     "AE_FMT_S24NE4MSBP",
     "AE_FMT_S24NE3P",
     "AE_FMT_DOUBLEP",
-    "AE_FMT_FLOATP"
+    "AE_FMT_FLOATP",
+     
+    /* DSD 8 bit packed */
+    "AE_FMT_DSD"
+
   };
 
   return formats[dataFormat];
@@ -536,6 +542,8 @@ AVSampleFormat CAEUtil::GetAVSampleFormat(AEDataFormat format)
       return AV_SAMPLE_FMT_DBLP;
     case AEDataFormat::AE_FMT_RAW:
       return AV_SAMPLE_FMT_U8;
+    case AEDataFormat::AE_FMT_DSD:
+      return AV_SAMPLE_FMT_U8;
     default:
     {
       if (AE_IS_PLANAR(format))
@@ -621,6 +629,11 @@ void CAEUtil::GenerateSilence(AEDataFormat format,
     case AE_FMT_U8:
     case AE_FMT_U8P:
       memset(buffer, 0x80, dataLength);
+      break;
+
+    case AE_FMT_DSD:
+      // fill with 0x69 which is silence in DSD
+      memset(buffer, 0x69, dataLength);
       break;
 
     default:

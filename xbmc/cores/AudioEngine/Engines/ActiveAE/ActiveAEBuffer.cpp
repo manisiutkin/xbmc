@@ -127,7 +127,8 @@ bool CActiveAEBufferPool::Create(unsigned int totaltime)
 CActiveAEBufferPoolResample::CActiveAEBufferPoolResample(const AEAudioFormat& inputFormat,
                                                          const AEAudioFormat& outputFormat,
                                                          AEQuality quality)
-  : CActiveAEBufferPool(outputFormat), m_inputFormat(inputFormat)
+  : CActiveAEBufferPool(outputFormat),
+    m_inputFormat(inputFormat)
 {
   if (m_inputFormat.m_dataFormat == AE_FMT_RAW)
   {
@@ -137,6 +138,30 @@ CActiveAEBufferPoolResample::CActiveAEBufferPoolResample(const AEAudioFormat& in
     m_inputFormat.m_channelLayout += AE_CH_FC;
   }
   m_resampleQuality = quality;
+  if (m_inputFormat.m_dataFormat == AE_FMT_DSD)
+  {
+    if (inputFormat.m_dataFormat == outputFormat.m_dataFormat &&
+        inputFormat.m_sampleRate == outputFormat.m_sampleRate)
+    {
+      if (inputFormat.m_channelLayout != outputFormat.m_channelLayout)
+      {
+        m_channelMap.resize(outputFormat.m_channelLayout.Count());
+        for (auto outCh = 0U; outCh < m_channelMap.size(); ++outCh)
+        {
+          int mapCh = -1;
+          for (auto inCh = 0U; inCh < inputFormat.m_channelLayout.Count(); ++inCh)
+          {
+            if (outputFormat.m_channelLayout[outCh] == inputFormat.m_channelLayout[inCh])
+            {
+              mapCh = inCh;
+              break;
+            }
+          }
+          m_channelMap[outCh] = mapCh;
+        }
+      }
+    }
+  }
 }
 
 CActiveAEBufferPoolResample::~CActiveAEBufferPoolResample()
@@ -157,6 +182,10 @@ bool CActiveAEBufferPoolResample::Create(
   if ((m_format.m_channelLayout.Count() < m_inputFormat.m_channelLayout.Count() && !normalize))
     m_normalize = false;
 
+  if (m_inputFormat.m_dataFormat == AE_FMT_DSD && m_inputFormat.m_dataFormat == m_format.m_dataFormat)
+  {
+    return true;
+  }
   if (m_inputFormat.m_channelLayout != m_format.m_channelLayout ||
       m_inputFormat.m_sampleRate != m_format.m_sampleRate ||
       m_inputFormat.m_dataFormat != m_format.m_dataFormat ||
@@ -196,7 +225,72 @@ void CActiveAEBufferPoolResample::ChangeResampler()
 bool CActiveAEBufferPoolResample::ResampleBuffers(int64_t timestamp)
 {
   bool busy = false;
-  CSampleBuffer *in;
+  CSampleBuffer* in;
+
+  // map input to output channels for DSD
+  if (!m_channelMap.empty())
+  {
+    if (m_procSample || !m_freeSamples.empty())
+    {
+      if (!m_inputSamples.empty())
+      {
+        if (!m_procSample)
+        {
+          m_procSample = GetFreeBuffer();
+        }
+
+        in = m_inputSamples.front();
+        m_inputSamples.pop_front();
+
+        int start = m_procSample->pkt->nb_samples * m_procSample->pkt->bytes_per_sample *
+                    m_procSample->pkt->config.channels / m_procSample->pkt->planes;
+
+        for (int i = 0; i < m_procSample->pkt->planes; i++)
+        {
+          m_planes[i] = m_procSample->pkt->data[i] + start;
+        }
+
+        int out_samples = MapChannels(m_planes,
+                                      m_procSample->pkt->config.channels,
+                                      m_procSample->pkt->max_nb_samples - m_procSample->pkt->nb_samples,
+                                      in->pkt->data,
+                                      in->pkt->config.channels,
+                                      in->pkt->nb_samples);
+        m_procSample->pkt->nb_samples += out_samples;
+        busy = true;
+
+        if (!timestamp)
+        {
+          if (in->timestamp)
+            m_lastSamplePts = in->timestamp;
+          else
+            in->pkt_start_offset = 0;
+        }
+        else
+        {
+          m_lastSamplePts = timestamp;
+          in->pkt_start_offset = 0;
+        }
+
+        // pts of last sample we added to the buffer
+        m_lastSamplePts += (in->pkt->nb_samples - in->pkt_start_offset) * 1000 / in->pkt->config.sample_rate;
+
+        // calculate pts for last sample in m_procSample
+        m_procSample->pkt_start_offset = m_procSample->pkt->nb_samples;
+        m_procSample->timestamp = m_lastSamplePts;
+
+        // some methods like encode require completely filled packets
+        if (!m_fillPackets || m_procSample->pkt->nb_samples == m_procSample->pkt->max_nb_samples)
+        {
+          m_outputSamples.push_back(m_procSample);
+          m_procSample = NULL;
+        }
+
+        in->Return();
+      }
+    }
+    return busy;
+  }
 
   if (!m_resampler)
   {
@@ -317,7 +411,7 @@ bool CActiveAEBufferPoolResample::ResampleBuffers(int64_t timestamp)
                   m_procSample->pkt->planes;
           for(int i=0; i<m_procSample->pkt->planes; i++)
           {
-            memset(m_procSample->pkt->data[i]+start, 0, m_procSample->pkt->linesize-start);
+            memset(m_procSample->pkt->data[i] + start, 0, m_procSample->pkt->linesize - start);
           }
         }
 
@@ -446,6 +540,30 @@ void CActiveAEBufferPoolResample::ForceResampler(bool force)
   m_forceResampler = force;
 }
 
+int CActiveAEBufferPoolResample::MapChannels(uint8_t** dst_buffer, int dst_channels, int dst_samples,
+                                             uint8_t** src_buffer, int src_channels, int src_samples)
+{
+  int samples = std::min(dst_samples, src_samples);
+  for (auto plane = 0; plane < m_procSample->pkt->planes; ++plane)
+  {
+    for (auto sample = 0; sample < samples; ++sample)
+    {
+      for (auto outCh = 0L; outCh < m_procSample->pkt->config.channels; ++outCh)
+      {
+        auto inCh = m_channelMap[outCh];
+        if (inCh != -1)
+          memcpy(dst_buffer[plane] + (sample * dst_channels + outCh) * m_procSample->pkt->bytes_per_sample,
+                 src_buffer[plane] + (sample * src_channels + inCh) * m_procSample->pkt->bytes_per_sample,
+                 m_procSample->pkt->bytes_per_sample);
+        else
+          memset(dst_buffer[plane] + (sample * dst_channels + outCh) * m_procSample->pkt->bytes_per_sample,
+                 0x69,
+                 m_procSample->pkt->bytes_per_sample);
+      }
+    }
+  }
+  return samples;
+}
 
 // ----------------------------------------------------------------------------------
 // Atempo
@@ -582,7 +700,10 @@ bool CActiveAEBufferPoolAtempo::ProcessBuffers()
           m_procSample->pkt->planes;
           for (int i=0; i<m_procSample->pkt->planes; i++)
           {
-            memset(m_procSample->pkt->data[i]+start, 0, m_procSample->pkt->linesize-start);
+            if (m_format.m_dataFormat == AE_FMT_DSD)
+              memset(m_procSample->pkt->data[i] + start, 0x69, m_procSample->pkt->linesize - start);
+            else
+              memset(m_procSample->pkt->data[i] + start, 0, m_procSample->pkt->linesize - start);
           }
         }
 

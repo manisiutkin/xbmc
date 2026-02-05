@@ -89,6 +89,25 @@ public:
   };
 };
 
+class CSinkDoPConverter
+{
+public:
+  inline bool IsSet() const;
+  void Set(AEAudioFormat format);
+  void Reset();
+  uint8_t** Convert(uint8_t** data, unsigned int frames, unsigned int offset);
+  void AdvanceMarker(unsigned int frames);
+
+private:
+  static constexpr uint8_t DOP_MARKER[] {0x05, 0xFA};
+  bool m_isSet{false};
+  AEDataFormat m_dataFormat;
+  unsigned int m_channels;
+  std::vector<float> m_data;
+  float* m_data_ptr;
+  unsigned int m_markerId;
+};
+
 class CActiveAESink : private CThread
 {
 public:
@@ -125,6 +144,9 @@ protected:
 
   void GenerateNoise();
 
+  std::unique_ptr<IAESink> SinkCreate(const std::string& device, AEAudioFormat& desiredFormat);
+  unsigned int SinkAddPackets(uint8_t** data, unsigned int frames, unsigned int offset);
+
   CEvent m_outMsgEvent;
   CEvent *m_inMsgEvent;
   int m_state;
@@ -151,12 +173,14 @@ protected:
   std::vector<AE::AESinkInfo> m_sinkInfoList;
   std::unique_ptr<IAESink> m_sink;
   AEAudioFormat m_sinkFormat, m_requestedFormat;
-  CEngineStats *m_stats;
+  CEngineStats* m_stats;
   float m_volume;
   int m_sinkLatency;
   std::unique_ptr<CAEBitstreamPacker> m_packer;
   bool m_needIecPack{false};
   bool m_streamNoise;
+
+  CSinkDoPConverter m_sinkDoP;
 };
 
 }

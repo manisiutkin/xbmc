@@ -945,7 +945,7 @@ void CActiveAESink::OpenSink()
   // WARNING: this changes format and does not use passthrough
   m_sinkFormat = m_requestedFormat;
   CLog::Log(LOGDEBUG, "CActiveAESink::OpenSink - trying to open device {}", device);
-  m_sink = CAESinkFactory::Create(device, m_sinkFormat);
+  m_sink = SinkCreate(device, m_sinkFormat);
 
   // try first device in out list
   if (!m_sink && !m_sinkInfoList.empty())
@@ -956,7 +956,7 @@ void CActiveAESink::OpenSink()
     device = dev.driver.empty() ? dev.name : dev.driver + ":" + dev.name;
     m_sinkFormat = m_requestedFormat;
     CLog::Log(LOGDEBUG, "CActiveAESink::OpenSink - trying to open device {}", device);
-    m_sink = CAESinkFactory::Create(device, m_sinkFormat);
+    m_sink = SinkCreate(device, m_sinkFormat);
   }
 
   if (!m_sink)
@@ -1098,7 +1098,7 @@ unsigned int CActiveAESink::OutputSamples(CSampleBuffer* samples)
   while (frames > 0)
   {
     maxFrames = std::min(frames, m_sinkFormat.m_frames);
-    written = m_sink->AddPackets(buffer, maxFrames, totalFrames - frames);
+    written = SinkAddPackets(buffer, maxFrames, totalFrames - frames);
     if (written == 0)
     {
       CThread::Sleep(
@@ -1157,6 +1157,14 @@ void CActiveAESink::SwapInit(CSampleBuffer* samples)
 
 void CActiveAESink::GenerateNoise()
 {
+  // generate DSD silence 0x69 pattern instead of noise
+  if (m_sinkFormat.m_dataFormat == AE_FMT_DSD)
+  {
+    auto nb_dsds{m_sampleOfSilence.pkt->max_nb_samples * m_sampleOfSilence.pkt->config.channels};
+    memset(m_sampleOfSilence.pkt->data[0], 0x69, nb_dsds);
+    return;
+  }
+
   int nb_floats = m_sampleOfSilence.pkt->max_nb_samples;
   nb_floats *= m_sampleOfSilence.pkt->config.channels;
   size_t size = nb_floats*sizeof(float);
@@ -1231,4 +1239,114 @@ void CActiveAESink::SetSilenceTimer()
   }
 
   m_extSilenceTimer.Set(m_extSilenceTimeout);
+}
+
+std::unique_ptr<IAESink> CActiveAESink::SinkCreate(const std::string& device, AEAudioFormat& desiredFormat)
+{
+  auto isDoP{false};
+  auto sinkFormat = desiredFormat;
+  if (m_sinkFormat.m_dataFormat == AE_FMT_DSD)
+  {
+    // check whether the device supports Native DSD
+    const AESinkDevice dev = CAESinkFactory::ParseDevice(device);
+    isDoP = true;
+    for (auto& sinkInfo : m_sinkInfoList)
+    {
+      for (auto& deviceInfo : sinkInfo.m_deviceInfoList)
+      {
+        if (deviceInfo.m_deviceName == dev.name)
+        {
+          for (auto dataFormat : deviceInfo.m_dataFormats)
+          {
+            if (dataFormat == AE_FMT_DSD)
+            {
+              isDoP = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (isDoP)
+  {
+    sinkFormat.m_dataFormat = AE_FMT_FLOAT;
+    sinkFormat.m_sampleRate = desiredFormat.m_sampleRate / 2;
+  }
+  auto sink = CAESinkFactory::Create(device, sinkFormat);
+  if (sink)
+  {
+    if (isDoP)
+    {
+      if ((sinkFormat.m_dataFormat == AE_FMT_FLOAT) &&
+          (sinkFormat.m_sampleRate == desiredFormat.m_sampleRate / 2))
+      {
+        m_sinkDoP.Set(sinkFormat);
+        sinkFormat.m_dataFormat = desiredFormat.m_dataFormat;
+        sinkFormat.m_sampleRate = desiredFormat.m_sampleRate;
+      }
+      else
+      {
+        sink->Deinitialize();
+        sink.reset();
+      }
+    }
+    else
+      m_sinkDoP.Reset();
+  }
+  desiredFormat = sinkFormat;
+  return sink;
+}
+
+unsigned int CActiveAESink::SinkAddPackets(uint8_t** data, unsigned int frames, unsigned int offset)
+{
+  if (!m_sinkDoP.IsSet())
+    return m_sink->AddPackets(data, frames, offset);
+
+  auto written = 2 * m_sink->AddPackets(m_sinkDoP.Convert(data, frames, offset), frames / 2, offset / 2);
+  m_sinkDoP.AdvanceMarker(written);
+  return written;
+}
+
+bool CSinkDoPConverter::IsSet() const
+{
+  return m_isSet;
+}
+
+void CSinkDoPConverter::Set(AEAudioFormat format)
+{
+  m_dataFormat = format.m_dataFormat;
+  m_channels = format.m_channelLayout.Count();
+  m_data_ptr = m_data.data();
+  m_markerId = 0;
+  m_isSet = true;
+}
+
+void CSinkDoPConverter::Reset()
+{
+  m_isSet = false;
+}
+
+uint8_t** CSinkDoPConverter::Convert(uint8_t** data, unsigned int frames, unsigned int offset)
+{
+  m_data.resize((frames / 2) * m_channels);
+  m_data_ptr = m_data.data();
+  for (unsigned int frame = 0; frame < frames / 2; ++frame)
+  {
+    for (unsigned int channel = 0; channel < m_channels; ++channel)
+    {
+      int intValue{0};
+      intValue += DOP_MARKER[(m_markerId + frame) % 2] << 24;
+      intValue += data[0][(2 * (offset + frame) + 0) * m_channels + channel] << 16; 
+      intValue += data[0][(2 * (offset + frame) + 1) * m_channels + channel] << 8;
+      float floatValue = float(intValue) / float(0x80000000U);
+      m_data_ptr[frame * m_channels + channel] = floatValue; 
+    }
+  }
+  return (uint8_t**)(&m_data_ptr);
+}
+
+void CSinkDoPConverter::AdvanceMarker(unsigned int frames)
+{
+  m_markerId = (m_markerId + frames / 2) % 2;
 }

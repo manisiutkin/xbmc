@@ -14,6 +14,7 @@
 #include "WinEventsWin32.h"
 #include "application/Application.h"
 #include "cores/AudioEngine/AESinkFactory.h"
+#include "cores/AudioEngine/Sinks/AESinkASIO.h"
 #include "cores/AudioEngine/Sinks/AESinkDirectSound.h"
 #include "cores/AudioEngine/Sinks/AESinkWASAPI.h"
 #include "cores/AudioEngine/Sinks/AESinkXaudio.h"
@@ -74,6 +75,7 @@ CWinSystemWin32::CWinSystemWin32()
 
   m_winEvents.reset(new CWinEventsWin32());
   AE::CAESinkFactory::ClearSinks();
+  CAESinkASIO::Register();
   CAESinkDirectSound::Register();
   CAESinkWASAPI::Register();
   CAESinkXAudio::Register();

@@ -216,6 +216,10 @@ extern "C"
     /// Floating point
     AUDIOENGINE_FMT_FLOATP,
 
+    /// **DSD**\n
+    /// DSD 8 bit packed, MSB is the oldest bit
+    AUDIOENGINE_FMT_DSD,
+
     /// Amount of sample formats.
     AUDIOENGINE_FMT_MAX
   };

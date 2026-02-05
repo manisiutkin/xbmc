@@ -107,5 +107,8 @@ enum AEDataFormat
   AE_FMT_DOUBLEP,
   AE_FMT_FLOATP,
 
+  // DSD 8 bit packed, MSB is the oldest bit
+  AE_FMT_DSD,
+
   AE_FMT_MAX
 };

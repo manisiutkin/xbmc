@@ -93,13 +93,16 @@ public:
   void FillBuffer();
   bool DoesNormalize() const;
   void ForceResampler(bool force);
+  int MapChannels(uint8_t** dst_buffer, int dst_channels, int dst_samples,
+                  uint8_t** src_buffer, int src_channels, int src_samples);
+
   AEAudioFormat m_inputFormat;
   std::deque<CSampleBuffer*> m_inputSamples;
   std::deque<CSampleBuffer*> m_outputSamples;
 
 protected:
   void ChangeResampler();
-
+   
   uint8_t *m_planes[16];
   bool m_empty = true;
   bool m_drain = false;
@@ -116,6 +119,7 @@ protected:
   bool m_forceResampler = false;
   AEQuality m_resampleQuality;
   bool m_stereoUpmix = false;
+  std::vector<int> m_channelMap;
 };
 
 class CActiveAEFilter;

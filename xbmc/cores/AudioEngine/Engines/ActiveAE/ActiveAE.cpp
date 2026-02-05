@@ -1185,7 +1185,7 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
   m_sinkRequestFormat = inputFormat;
   ApplySettingsToFormat(m_sinkRequestFormat, m_settings, (int*)&m_mode);
   m_extKeepConfig = 0ms;
-
+  
   std::string device = (m_sinkRequestFormat.m_dataFormat == AE_FMT_RAW) ? m_settings.passthroughdevice : m_settings.device;
 
   const AESinkDevice dev = CAESinkFactory::ParseDevice(device);
@@ -1321,7 +1321,9 @@ void CActiveAE::Configure(AEAudioFormat *desiredFmt)
     else
     {
       outputFormat = m_sinkFormat;
-      outputFormat.m_dataFormat = AE_IS_PLANAR(outputFormat.m_dataFormat) ? AE_FMT_FLOATP : AE_FMT_FLOAT;
+      if (outputFormat.m_dataFormat != AE_FMT_DSD)
+        outputFormat.m_dataFormat = AE_IS_PLANAR(outputFormat.m_dataFormat) ? AE_FMT_FLOATP : AE_FMT_FLOAT;
+     
       outputFormat.m_frameSize = outputFormat.m_channelLayout.Count() *
                                  (CAEUtil::DataFormatToBits(outputFormat.m_dataFormat) >> 3);
 
@@ -1725,7 +1727,8 @@ void CActiveAE::ApplySettingsToFormat(AEAudioFormat& format,
   }
   else
   {
-    format.m_dataFormat = AE_IS_PLANAR(format.m_dataFormat) ? AE_FMT_FLOATP : AE_FMT_FLOAT;
+    if (format.m_dataFormat != AE_FMT_DSD)
+      format.m_dataFormat = AE_IS_PLANAR(format.m_dataFormat) ? AE_FMT_FLOATP : AE_FMT_FLOAT;
     // consider user channel layout for those cases
     // 1. input stream is multichannel
     // 2. stereo upmix is selected
@@ -1792,7 +1795,8 @@ void CActiveAE::ApplySettingsToFormat(AEAudioFormat& format,
     if (m_settings.config == AE_CONFIG_FIXED)
     {
       format.m_sampleRate = m_settings.samplerate;
-      format.m_dataFormat = AE_FMT_FLOAT;
+      if (format.m_dataFormat != AE_FMT_DSD)
+        format.m_dataFormat = AE_FMT_FLOAT;
       CLog::Log(LOGINFO, "CActiveAE::ApplySettings - Forcing samplerate to {}",
                 format.m_sampleRate);
     }
@@ -2074,7 +2078,10 @@ bool CActiveAE::RunStages()
           out = m_silenceBuffers->GetFreeBuffer();
           for (int i=0; i<out->pkt->planes; i++)
           {
-            memset(out->pkt->data[i], 0, out->pkt->linesize);
+            if (m_silenceBuffers->m_format.m_dataFormat == AE_FMT_DSD)
+              memset(out->pkt->data[i], 0x69, out->pkt->linesize);
+            else
+              memset(out->pkt->data[i], 0, out->pkt->linesize);
           }
           out->pkt->nb_samples = out->pkt->max_nb_samples;
         }
@@ -2118,75 +2125,81 @@ bool CActiveAE::RunStages()
           {
             out = (*it)->m_processingBuffers->m_outputSamples.front();
             (*it)->m_processingBuffers->m_outputSamples.pop_front();
-
-            int nb_floats = out->pkt->nb_samples * out->pkt->config.channels / out->pkt->planes;
-            int nb_loops = 1;
-            float fadingStep = 0.0f;
-
-            // fading
-            if ((*it)->m_fadingSamples == -1)
+            
+            if ((*it)->m_processingBuffers->m_inputFormat.m_dataFormat != AE_FMT_DSD)
             {
-              (*it)->m_fadingSamples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
-              if ((*it)->m_fadingSamples > 0)
-                (*it)->m_volume = (*it)->m_fadingBase;
-              else
+              int nb_floats = out->pkt->nb_samples * out->pkt->config.channels / out->pkt->planes;
+              int nb_loops = 1;
+              float fadingStep = 0.0f;
+
+              // fading
+              if ((*it)->m_fadingSamples == -1)
               {
-                (*it)->m_volume = (*it)->m_fadingTarget;
-                std::unique_lock lock((*it)->m_streamLock);
-                (*it)->m_streamFading = false;
-              }
-            }
-            if ((*it)->m_fadingSamples > 0)
-            {
-              nb_floats = out->pkt->config.channels / out->pkt->planes;
-              nb_loops = out->pkt->nb_samples;
-              float delta = (*it)->m_fadingTarget - (*it)->m_fadingBase;
-              int samples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
-              fadingStep = delta / samples;
-            }
-
-            // for stream amplification,
-            // turned off downmix normalization,
-            // or if sink format is float (in order to prevent from clipping)
-            // we need to run on a per sample basis
-            if ((*it)->m_amplify != 1.0f || !(*it)->m_processingBuffers->DoesNormalize() ||
-                (m_sinkFormat.m_dataFormat == AE_FMT_FLOAT))
-            {
-              nb_floats = out->pkt->config.channels / out->pkt->planes;
-              nb_loops = out->pkt->nb_samples;
-            }
-
-            for(int i=0; i<nb_loops; i++)
-            {
-              if ((*it)->m_fadingSamples > 0)
-              {
-                (*it)->m_volume += fadingStep;
-                (*it)->m_fadingSamples--;
-
-                if ((*it)->m_fadingSamples == 0)
+                (*it)->m_fadingSamples =
+                  m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
+                if ((*it)->m_fadingSamples > 0)
+                  (*it)->m_volume = (*it)->m_fadingBase;
+                else
                 {
-                  // set variables being polled via stream interface
+                  (*it)->m_volume = (*it)->m_fadingTarget;
                   std::unique_lock lock((*it)->m_streamLock);
                   (*it)->m_streamFading = false;
                 }
               }
-
-              // volume for stream
-              float volume = (*it)->m_volume * (*it)->m_rgain;
-              if(nb_loops > 1)
-                volume *= (*it)->m_limiter.Run((float**)out->pkt->data, out->pkt->config.channels, i*nb_floats, out->pkt->planes > 1);
-
-              for(int j=0; j<out->pkt->planes; j++)
+              if ((*it)->m_fadingSamples > 0)
               {
-#if defined(HAVE_SSE) && defined(__SSE__)
-                CAEUtil::SSEMulArray((float*)out->pkt->data[j]+i*nb_floats, volume, nb_floats);
-#else
-                float* fbuffer = (float*) out->pkt->data[j]+i*nb_floats;
-                for (int k = 0; k < nb_floats; ++k)
+                nb_floats = out->pkt->config.channels / out->pkt->planes;
+                nb_loops = out->pkt->nb_samples;
+                float delta = (*it)->m_fadingTarget - (*it)->m_fadingBase;
+                int samples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
+                fadingStep = delta / samples;
+              }
+
+              // for stream amplification,
+              // turned off downmix normalization,
+              // or if sink format is float (in order to prevent from clipping)
+              // we need to run on a per sample basis
+              if ((*it)->m_amplify != 1.0f || !(*it)->m_processingBuffers->DoesNormalize() ||
+                  (m_sinkFormat.m_dataFormat == AE_FMT_FLOAT))
+              {
+                nb_floats = out->pkt->config.channels / out->pkt->planes;
+                nb_loops = out->pkt->nb_samples;
+              }
+
+              for (int i = 0; i < nb_loops; i++)
+              {
+                if ((*it)->m_fadingSamples > 0)
                 {
-                  fbuffer[k] *= volume;
+                  (*it)->m_volume += fadingStep;
+                  (*it)->m_fadingSamples--;
+
+                  if ((*it)->m_fadingSamples == 0)
+                  {
+                    // set variables being polled via stream interface
+                    std::unique_lock lock((*it)->m_streamLock);
+                    (*it)->m_streamFading = false;
+                  }
                 }
+
+                // volume for stream
+                float volume = (*it)->m_volume * (*it)->m_rgain;
+                if (nb_loops > 1)
+                  volume *= (*it)->m_limiter.Run((float**)out->pkt->data, out->pkt->config.channels,
+                                                 i * nb_floats, out->pkt->planes > 1);
+
+                for (int j = 0; j < out->pkt->planes; j++)
+                {
+#if defined(HAVE_SSE) && defined(__SSE__)
+                  CAEUtil::SSEMulArray((float*)out->pkt->data[j] + i * nb_floats, volume,
+                                       nb_floats);
+#else
+                  float* fbuffer = (float*)out->pkt->data[j] + i * nb_floats;
+                  for (int k = 0; k < nb_floats; ++k)
+                  {
+                    fbuffer[k] *= volume;
+                  }
 #endif
+                }
               }
             }
           }
@@ -2195,79 +2208,84 @@ bool CActiveAE::RunStages()
             CSampleBuffer *mix = NULL;
             mix = (*it)->m_processingBuffers->m_outputSamples.front();
             (*it)->m_processingBuffers->m_outputSamples.pop_front();
-
-            int nb_floats = mix->pkt->nb_samples * mix->pkt->config.channels / mix->pkt->planes;
-            int nb_loops = 1;
-            float fadingStep = 0.0f;
-
-            // fading
-            if ((*it)->m_fadingSamples == -1)
+      
+            if ((*it)->m_processingBuffers->m_inputFormat.m_dataFormat != AE_FMT_DSD)
             {
-              (*it)->m_fadingSamples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
-              (*it)->m_volume = (*it)->m_fadingBase;
-            }
-            if ((*it)->m_fadingSamples > 0)
-            {
-              nb_floats = mix->pkt->config.channels / mix->pkt->planes;
-              nb_loops = mix->pkt->nb_samples;
-              float delta = (*it)->m_fadingTarget - (*it)->m_fadingBase;
-              int samples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
-              fadingStep = delta / samples;
-            }
+              int nb_floats = mix->pkt->nb_samples * mix->pkt->config.channels / mix->pkt->planes;
+              int nb_loops = 1;
+              float fadingStep = 0.0f;
 
-            // for streams amplification of turned off downmix normalization
-            // we need to run on a per sample basis
-            if ((*it)->m_amplify != 1.0f || !(*it)->m_processingBuffers->DoesNormalize())
-            {
-              nb_floats = out->pkt->config.channels / out->pkt->planes;
-              nb_loops = out->pkt->nb_samples;
-            }
-
-            for(int i=0; i<nb_loops; i++)
-            {
+              // fading
+              if ((*it)->m_fadingSamples == -1)
+              {
+                (*it)->m_fadingSamples =
+                    m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
+                (*it)->m_volume = (*it)->m_fadingBase;
+              }
               if ((*it)->m_fadingSamples > 0)
               {
-                (*it)->m_volume += fadingStep;
-                (*it)->m_fadingSamples--;
-
-                if ((*it)->m_fadingSamples == 0)
-                {
-                  // set variables being polled via stream interface
-                  std::unique_lock lock((*it)->m_streamLock);
-                  (*it)->m_streamFading = false;
-                }
+                nb_floats = mix->pkt->config.channels / mix->pkt->planes;
+                nb_loops = mix->pkt->nb_samples;
+                float delta = (*it)->m_fadingTarget - (*it)->m_fadingBase;
+                int samples = m_internalFormat.m_sampleRate * (float)(*it)->m_fadingTime / 1000.0f;
+                fadingStep = delta / samples;
               }
 
-              // volume for stream
-              float volume = (*it)->m_volume * (*it)->m_rgain;
-              if(nb_loops > 1)
-                volume *= (*it)->m_limiter.Run((float**)mix->pkt->data, mix->pkt->config.channels, i*nb_floats, mix->pkt->planes > 1);
-
-              for(int j=0; j<out->pkt->planes && j<mix->pkt->planes; j++)
+              // for streams amplification of turned off downmix normalization
+              // we need to run on a per sample basis
+              if ((*it)->m_amplify != 1.0f || !(*it)->m_processingBuffers->DoesNormalize())
               {
-                float *dst = (float*)out->pkt->data[j]+i*nb_floats;
-                float *src = (float*)mix->pkt->data[j]+i*nb_floats;
-#if defined(HAVE_SSE) && defined(__SSE__)
-                CAEUtil::SSEMulAddArray(dst, src, volume, nb_floats);
-                for (int k = 0; k < nb_floats; ++k)
+                nb_floats = out->pkt->config.channels / out->pkt->planes;
+                nb_loops = out->pkt->nb_samples;
+              }
+
+              for (int i = 0; i < nb_loops; i++)
+              {
+                if ((*it)->m_fadingSamples > 0)
                 {
-                  if (fabs(dst[k]) > 1.0f)
+                  (*it)->m_volume += fadingStep;
+                  (*it)->m_fadingSamples--;
+
+                  if ((*it)->m_fadingSamples == 0)
                   {
-                    needClamp = true;
-                    break;
+                    // set variables being polled via stream interface
+                    std::unique_lock lock((*it)->m_streamLock);
+                    (*it)->m_streamFading = false;
                   }
                 }
-#else
-                for (int k = 0; k < nb_floats; ++k)
+
+                // volume for stream
+                float volume = (*it)->m_volume * (*it)->m_rgain;
+                if (nb_loops > 1)
+                  volume *= (*it)->m_limiter.Run((float**)mix->pkt->data, mix->pkt->config.channels,
+                                                 i * nb_floats, mix->pkt->planes > 1);
+
+                for (int j = 0; j < out->pkt->planes && j < mix->pkt->planes; j++)
                 {
-                  dst[k] += src[k] * volume;
-                  if (fabs(dst[k]) > 1.0f)
-                    needClamp = true;
-                }
+                  float* dst = (float*)out->pkt->data[j] + i * nb_floats;
+                  float* src = (float*)mix->pkt->data[j] + i * nb_floats;
+#if defined(HAVE_SSE) && defined(__SSE__)
+                  CAEUtil::SSEMulAddArray(dst, src, volume, nb_floats);
+                  for (int k = 0; k < nb_floats; ++k)
+                  {
+                    if (fabs(dst[k]) > 1.0f)
+                    {
+                      needClamp = true;
+                      break;
+                    }
+                  }
+#else
+                  for (int k = 0; k < nb_floats; ++k)
+                  {
+                    dst[k] += src[k] * volume;
+                    if (fabs(dst[k]) > 1.0f)
+                      needClamp = true;
+                  }
 #endif
+                }
               }
+              mix->Return();
             }
-            mix->Return();
           }
           busy = true;
         }
@@ -2276,10 +2294,13 @@ bool CActiveAE::RunStages()
       // finally clamp samples
       if (out && needClamp)
       {
-        int nb_floats = out->pkt->nb_samples * out->pkt->config.channels / out->pkt->planes;
-        for (int i=0; i<out->pkt->planes; i++)
+        if ((*it)->m_processingBuffers->m_inputFormat.m_dataFormat != AE_FMT_DSD)
         {
-          CAEUtil::ClampArray((float*)out->pkt->data[i], nb_floats);
+          int nb_floats = out->pkt->nb_samples * out->pkt->config.channels / out->pkt->planes;
+          for (int i = 0; i < out->pkt->planes; i++)
+          {
+            CAEUtil::ClampArray((float*)out->pkt->data[i], nb_floats);
+          }
         }
       }
 
@@ -2647,18 +2668,21 @@ void CActiveAE::MixSounds(CSoundPacket &dstSample)
                 it->sound->GetSound(false)->config.channels /
                 it->sound->GetSound(false)->planes;
 
-    for(int j=0; j<dstSample.planes; j++)
+    if (m_sinkFormat.m_dataFormat != AE_FMT_DSD)
     {
-      volume = it->sound->GetVolume();
-      out = (float*)dstSample.data[j];
-      sample_buffer = (float*)(it->sound->GetSound(false)->data[j]+start);
-      int nb_floats = mix_samples * dstSample.config.channels / dstSample.planes;
+      for (int j = 0; j < dstSample.planes; j++)
+      {
+        volume = it->sound->GetVolume();
+        out = (float*)dstSample.data[j];
+        sample_buffer = (float*)(it->sound->GetSound(false)->data[j] + start);
+        int nb_floats = mix_samples * dstSample.config.channels / dstSample.planes;
 #if defined(HAVE_SSE) && defined(__SSE__)
-      CAEUtil::SSEMulAddArray(out, sample_buffer, volume, nb_floats);
+        CAEUtil::SSEMulAddArray(out, sample_buffer, volume, nb_floats);
 #else
-      for (int k = 0; k < nb_floats; ++k)
-        *out++ += *sample_buffer++ * volume;
+        for (int k = 0; k < nb_floats; ++k)
+          *out++ += *sample_buffer++ * volume;
 #endif
+      }
     }
 
     it->samples_played += mix_samples;
@@ -2677,19 +2701,22 @@ void CActiveAE::Deamplify(CSoundPacket &dstSample)
 {
   if (m_volumeScaled < 1.0f || m_muted)
   {
-    int nb_floats = dstSample.nb_samples * dstSample.config.channels / dstSample.planes;
-    float volume = m_muted ? 0.0f : m_volumeScaled;
-
-    for(int j=0; j<dstSample.planes; j++)
+    if (m_sinkFormat.m_dataFormat != AE_FMT_DSD)
     {
-      float* buffer = reinterpret_cast<float*>(dstSample.data[j]);
+      int nb_floats = dstSample.nb_samples * dstSample.config.channels / dstSample.planes;
+      float volume = m_muted ? 0.0f : m_volumeScaled;
+
+      for (int j = 0; j < dstSample.planes; j++)
+      {
+        float* buffer = reinterpret_cast<float*>(dstSample.data[j]);
 #if defined(HAVE_SSE) && defined(__SSE__)
-      CAEUtil::SSEMulArray(buffer, volume, nb_floats);
+        CAEUtil::SSEMulArray(buffer, volume, nb_floats);
 #else
-      float *fbuffer = buffer;
-      for (int i = 0; i < nb_floats; i++)
-        *fbuffer++ *= volume;
+        float* fbuffer = buffer;
+        for (int i = 0; i < nb_floats; i++)
+          *fbuffer++ *= volume;
 #endif
+      }
     }
   }
 }
@@ -3343,6 +3370,9 @@ bool CActiveAE::ResampleSound(CActiveAESound *sound)
   int dst_samples;
 
   if (m_mode == MODE_RAW || m_internalFormat.m_dataFormat == AE_FMT_INVALID)
+    return false;
+
+  if (m_internalFormat.m_dataFormat == AE_FMT_DSD)
     return false;
 
   if (!sound->GetSound(true))
