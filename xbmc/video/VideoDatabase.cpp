@@ -32,7 +32,6 @@
 #include "filesystem/StackDirectory.h"
 #include "guilib/GUIComponent.h"
 #include "guilib/GUIWindowManager.h"
-#include "guilib/LocalizeStrings.h"
 #include "guilib/guiinfo/GUIInfoLabels.h"
 #include "imagefiles/ImageFileURL.h"
 #include "interfaces/AnnouncementManager.h"
@@ -40,6 +39,8 @@
 #include "music/Artist.h"
 #include "playlists/SmartPlayList.h"
 #include "profiles/ProfileManager.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/MediaSettings.h"
 #include "settings/MediaSourceSettings.h"
@@ -120,7 +121,7 @@ int CVideoDatabase::GetPathId(const std::string& strPath)
       return -1;
 
     std::string strPath1(strPath);
-    if (URIUtils::IsStack(strPath) || StringUtils::StartsWithNoCase(strPath, "rar://") || StringUtils::StartsWithNoCase(strPath, "zip://"))
+    if (URIUtils::IsStack(strPath))
       URIUtils::GetParentPath(strPath,strPath1);
 
     URIUtils::AddSlashAtEnd(strPath1);
@@ -324,7 +325,28 @@ int CVideoDatabase::AddPath(const std::string& strPath, const std::string &paren
   std::string strSQL;
   try
   {
-    int idPath = GetPathId(strPath);
+    // Special case for zip files
+    // If a zip file is added using the native zip support it has a zip:// path
+    // If the archive vfs addon is then installed and the containing directory is altered (so the hash is changed)
+    //  then when the directory is rescanned the zip file will have an archive:// path and could lead to an orphaned zip:// entry
+    // Similarly if the archive vfs addon is used first and then removed and the directory contents change then rescan could lead to zip://
+    // So check to see if there is an existing zip:// or archive:// path and use that
+    int idPath{-1};
+    CURL url(strPath);
+    if (url.IsProtocol("archive"))
+    {
+      // See if a zip://
+      url.SetProtocol("zip");
+      idPath = GetPathId(url.Get());
+    }
+    else if (url.IsProtocol("zip"))
+    {
+      // See if an archive://
+      url.SetProtocol("archive");
+      idPath = GetPathId(url.Get());
+    }
+    if (idPath < 0)
+      idPath = GetPathId(strPath);
     if (idPath >= 0)
       return idPath; // already have the path
 
@@ -334,7 +356,7 @@ int CVideoDatabase::AddPath(const std::string& strPath, const std::string &paren
       return -1;
 
     std::string strPath1(strPath);
-    if (URIUtils::IsStack(strPath) || StringUtils::StartsWithNoCase(strPath, "rar://") || StringUtils::StartsWithNoCase(strPath, "zip://"))
+    if (URIUtils::IsStack(strPath))
       URIUtils::GetParentPath(strPath,strPath1);
 
     URIUtils::AddSlashAtEnd(strPath1);
@@ -565,7 +587,7 @@ int CVideoDatabase::AddOrUpdateFile(const std::string& fileAndPath,
 
 int CVideoDatabase::AddFile(const CFileItem& item)
 {
-  if (URIUtils::IsBlurayPath(item.GetDynPath()) || item.IsStack())
+  if (CUtil::UseDynPathForAddOrUpdate(item))
     return AddFile(item.GetDynPath());
   if (IsVideoDb(item) && item.HasVideoInfoTag())
   {
@@ -1985,9 +2007,10 @@ bool CVideoDatabase::GetSeasonInfo(int idSeason,
     if (name.empty())
     {
       if (season == 0)
-        name = g_localizeStrings.Get(20381);
+        name = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20381);
       else
-        name = StringUtils::Format(g_localizeStrings.Get(20358), season);
+        name = StringUtils::Format(
+            CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20358), season);
     }
 
     details.m_strTitle = name;
@@ -2131,6 +2154,7 @@ bool CVideoDatabase::GetFileInfo(const std::string& strFilenameAndPath, CVideoIn
     details.m_strPath = m_pDS->fv("path.strPath").get_asString();
     std::string strFileName = m_pDS->fv("files.strFilename").get_asString();
     ConstructPath(details.m_strFileNameAndPath, details.m_strPath, strFileName);
+    details.m_basePath = URIUtils::GetBasePath(details.m_strPath);
     details.SetPlayCount(std::max(details.GetPlayCount(), m_pDS->fv("files.playCount").get_asInt()));
     if (!details.m_lastPlayed.IsValid())
       details.m_lastPlayed.SetFromDBDateTime(m_pDS->fv("files.lastPlayed").get_asString());
@@ -7401,9 +7425,10 @@ bool CVideoDatabase::GetSeasonsByWhere(const std::string& strBaseDir, const Filt
         if (strLabel.empty())
         {
           if (iSeason == 0)
-            strLabel = g_localizeStrings.Get(20381);
+            strLabel = CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20381);
           else
-            strLabel = StringUtils::Format(g_localizeStrings.Get(20358), iSeason);
+            strLabel = StringUtils::Format(
+                CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20358), iSeason);
         }
         auto pItem = std::make_shared<CFileItem>(strLabel);
 
@@ -8327,6 +8352,8 @@ ScraperPtr CVideoDatabase::GetScraperForPath(const std::string& strPath,
 
     if (URIUtils::IsMultiPath(strPath))
       strPath2 = CMultiPathDirectory::GetFirstPath(strPath);
+    else if (URIUtils::IsStack(strPath))
+      strPath2 = CStackDirectory::GetFirstStackedFile(strPath);
     else
       strPath2 = strPath;
 
@@ -9570,7 +9597,7 @@ void CVideoDatabase::CleanDatabase(CGUIDialogProgressBarHandle* handle,
 
     if (handle)
     {
-      handle->SetTitle(g_localizeStrings.Get(700));
+      handle->SetTitle(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(700));
       handle->SetText("");
     }
     else if (showProgress)
@@ -9922,7 +9949,7 @@ void CVideoDatabase::CleanDatabase(CGUIDialogProgressBarHandle* handle,
       CommitTransaction();
 
       if (handle)
-        handle->SetTitle(g_localizeStrings.Get(331));
+        handle->SetTitle(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(331));
 
       Compress(false);
 
@@ -10054,8 +10081,9 @@ std::vector<int> CVideoDatabase::CleanMediaType(const std::string &mediaType, co
             {
               CURL sourceUrl(sourcePath);
               pDialog->SetHeading(CVariant{15012});
-              pDialog->SetText(CVariant{StringUtils::Format(g_localizeStrings.Get(15013),
-                                                            sourceUrl.GetWithoutUserDetails())});
+              pDialog->SetText(CVariant{StringUtils::Format(
+                  CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(15013),
+                  sourceUrl.GetWithoutUserDetails())});
               pDialog->SetChoice(0, CVariant{15015});
               pDialog->SetChoice(1, CVariant{15014});
               pDialog->Open();
@@ -10398,9 +10426,10 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
           else
           {
             CLog::Log(LOGERROR, "Movie nfo export failed! ('{}')", nfoFile);
-            CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
-                                                  g_localizeStrings.Get(20302),
-                                                  CURL::GetRedacted(nfoFile));
+            CGUIDialogKaiToast::QueueNotification(
+                CGUIDialogKaiToast::Error,
+                CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20302),
+                CURL::GetRedacted(nfoFile));
             iFailCount++;
           }
         }
@@ -10468,9 +10497,10 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
               else
               {
                 CLog::Log(LOGERROR, "Set nfo export failed! ('{}')", nfoFile);
-                CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
-                                                      g_localizeStrings.Get(20302),
-                                                      CURL::GetRedacted(nfoFile));
+                CGUIDialogKaiToast::QueueNotification(
+                    CGUIDialogKaiToast::Error,
+                    CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20302),
+                    CURL::GetRedacted(nfoFile));
                 iFailCount++;
               }
             }
@@ -10564,9 +10594,10 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
             else
             {
               CLog::Log(LOGERROR, "Musicvideo nfo export failed! ('{}')", nfoFile);
-              CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
-                                                    g_localizeStrings.Get(20302),
-                                                    CURL::GetRedacted(nfoFile));
+              CGUIDialogKaiToast::QueueNotification(
+                  CGUIDialogKaiToast::Error,
+                  CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20302),
+                  CURL::GetRedacted(nfoFile));
               iFailCount++;
             }
           }
@@ -10672,9 +10703,10 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
             else
             {
               CLog::Log(LOGERROR, "TVShow nfo export failed! ('{}')", nfoFile);
-              CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
-                                                    g_localizeStrings.Get(20302),
-                                                    CURL::GetRedacted(nfoFile));
+              CGUIDialogKaiToast::QueueNotification(
+                  CGUIDialogKaiToast::Error,
+                  CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20302),
+                  CURL::GetRedacted(nfoFile));
               iFailCount++;
             }
           }
@@ -10781,9 +10813,10 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
             else
             {
               CLog::Log(LOGERROR, "Episode nfo export failed! ('{}')", nfoFile);
-              CGUIDialogKaiToast::QueueNotification(CGUIDialogKaiToast::Error,
-                                                    g_localizeStrings.Get(20302),
-                                                    CURL::GetRedacted(nfoFile));
+              CGUIDialogKaiToast::QueueNotification(
+                  CGUIDialogKaiToast::Error,
+                  CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(20302),
+                  CURL::GetRedacted(nfoFile));
               iFailCount++;
             }
           }
@@ -10885,7 +10918,9 @@ void CVideoDatabase::ExportToXML(const std::string &path, bool singleFile /* = t
 
   if (iFailCount > 0)
     HELPERS::ShowOKDialogText(
-        CVariant{647}, CVariant{StringUtils::Format(g_localizeStrings.Get(15011), iFailCount)});
+        CVariant{647},
+        CVariant{StringUtils::Format(
+            CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(15011), iFailCount)});
 }
 
 void CVideoDatabase::ExportArt(const CFileItem& item,
@@ -11196,8 +11231,7 @@ void CVideoDatabase::ConstructPath(std::string& strDest,
                                    const std::string& strPath,
                                    const std::string& strFileName) const
 {
-  if (URIUtils::IsStack(strFileName) ||
-      URIUtils::IsInArchive(strFileName) || URIUtils::IsPlugin(strPath))
+  if (URIUtils::IsStack(strFileName) || URIUtils::IsPlugin(strPath))
     strDest = strFileName;
   else
     strDest = URIUtils::AddFileToFolder(strPath, strFileName);
@@ -11207,7 +11241,7 @@ void CVideoDatabase::SplitPath(const std::string& strFileNameAndPath,
                                std::string& strPath,
                                std::string& strFileName) const
 {
-  if (URIUtils::IsStack(strFileNameAndPath) || StringUtils::StartsWithNoCase(strFileNameAndPath, "rar://") || StringUtils::StartsWithNoCase(strFileNameAndPath, "zip://"))
+  if (URIUtils::IsStack(strFileNameAndPath))
   {
     URIUtils::GetParentPath(strFileNameAndPath,strPath);
     strFileName = strFileNameAndPath;
@@ -11912,7 +11946,8 @@ void CVideoDatabase::UpdateVideoVersionTypeTable()
 
     for (int id = VIDEO_VERSION_ID_BEGIN; id <= VIDEO_VERSION_ID_END; ++id)
     {
-      const std::string& type = g_localizeStrings.Get(id);
+      const std::string& type =
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(id);
       m_pDS->exec(PrepareSQL("UPDATE videoversiontype SET name = '%s', owner = %i WHERE id = '%i'",
                              type.c_str(), VideoAssetTypeOwner::SYSTEM, id));
     }

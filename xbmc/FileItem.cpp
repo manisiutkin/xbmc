@@ -24,7 +24,6 @@
 #include "filesystem/VideoDatabaseDirectory/QueryParams.h"
 #include "games/GameUtils.h"
 #include "games/tags/GameInfoTag.h"
-#include "guilib/LocalizeStrings.h"
 #include "media/MediaLockState.h"
 #include "music/Album.h"
 #include "music/Artist.h"
@@ -48,6 +47,8 @@
 #include "pvr/providers/PVRProvider.h"
 #include "pvr/recordings/PVRRecording.h"
 #include "pvr/timers/PVRTimerInfoTag.h"
+#include "resources/LocalizeStrings.h"
+#include "resources/ResourcesComponent.h"
 #include "settings/AdvancedSettings.h"
 #include "settings/SettingUtils.h"
 #include "settings/Settings.h"
@@ -897,7 +898,8 @@ bool CFileItem::IsFileFolder(FileFolderType types) const
     if (PLAYLIST::IsSmartPlayList(*this) ||
         (PLAYLIST::IsPlayList(*this) &&
          CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_playlistAsFolders) ||
-        IsAPK() || IsZIP() || IsRAR() || IsRSS() || MUSIC::IsAudioBook(*this) ||
+        IsAPK() || IsZIP() || IsRAR() || IsRSS() || URIUtils::IsArchive(GetURL()) ||
+        MUSIC::IsAudioBook(*this) ||
 #if defined(TARGET_ANDROID)
         IsType(".apk") ||
 #endif
@@ -1844,32 +1846,23 @@ std::string CFileItem::FindLocalArt(const std::string &artFile, bool useFolder) 
   return "";
 }
 
-std::string CFileItem::GetMovieName(bool bUseFolderNames /* = false */) const
+std::string CFileItem::GetMovieName(bool bUseFolderNames /* = false */, int depth /* = 0 */) const
 {
   if (IsPlugin() && HasVideoInfoTag() && !GetVideoInfoTag()->m_strTitle.empty())
     return GetVideoInfoTag()->m_strTitle;
-
-  // Deal with special case of files in a 'Disc n' folder etc..
-  if (bUseFolderNames)
-  {
-    const std::string r{URIUtils::GetTrailingPartNumberRegex()};
-    CRegExp regex{true, CRegExp::autoUtf8, r.c_str()};
-    std::string path{URIUtils::GetDirectory(
-        URIUtils::IsBDFile(GetPath()) ? URIUtils::GetDiscBase(GetPath()) : GetPath())};
-    URIUtils::RemoveSlashAtEnd(path);
-    if (regex.RegFind(path) != -1)
-    {
-      std::string moviePath{URIUtils::GetParentPath(path)};
-      URIUtils::RemoveSlashAtEnd(moviePath);
-      return URIUtils::GetFileName(moviePath);
-    }
-  }
 
   if (IsLabelPreformatted())
     return GetLabel();
 
   if (m_pvrRecordingInfoTag)
     return m_pvrRecordingInfoTag->m_strTitle;
+
+  if (depth > 3)
+  {
+    CLog::LogF(LOGERROR, "Depth limit exceeded");
+    return {};
+  }
+
   if (URIUtils::IsPVRRecording(m_strPath))
   {
     const std::string title = CPVRRecording::GetTitleFromURL(m_strPath);
@@ -1879,7 +1872,28 @@ std::string CFileItem::GetMovieName(bool bUseFolderNames /* = false */) const
 
   std::string strMovieName;
   if (URIUtils::IsStack(m_strPath))
-    strMovieName = CStackDirectory::GetStackTitlePath(m_strPath);
+  {
+    strMovieName = CStackDirectory::GetStackTitlePath(m_strPath); // Can be a file or folder
+    if (URIUtils::IsStack(strMovieName))
+    {
+      // Stacks in stacks not supported, avoid infinite loop
+      strMovieName = "";
+      return strMovieName;
+    }
+
+    if (bUseFolderNames || URIUtils::GetFileName(strMovieName).empty())
+    {
+      CFileItem item(URIUtils::GetDirectory(strMovieName), true);
+      strMovieName = item.GetMovieName(true, depth + 1);
+      return strMovieName;
+    }
+    else
+    {
+      CFileItem item(strMovieName, false);
+      strMovieName = item.GetMovieName(false, depth + 1);
+      return strMovieName;
+    }
+  }
   else
     strMovieName = GetBaseMoviePath(bUseFolderNames);
 
@@ -1896,34 +1910,56 @@ std::string CFileItem::GetBaseMoviePath(bool bUseFolderNames) const
 
   if (IsMultiPath())
     strMovieName = CMultiPathDirectory::GetFirstPath(m_strPath);
+  if (strMovieName.empty())
+    return strMovieName;
 
   if (URIUtils::IsBlurayPath(strMovieName))
-    strMovieName = URIUtils::GetDiscBasePath(strMovieName);
+  {
+    strMovieName = bUseFolderNames ? URIUtils::GetDiscBasePath(strMovieName)
+                                   : URIUtils::GetDiscBase(strMovieName);
+  }
+  else if (bUseFolderNames && URIUtils::IsStack(strMovieName))
+  {
+    strMovieName = CStackDirectory::GetBasePath(m_strPath);
+  }
   else if (bUseFolderNames && (!IsFolder() || URIUtils::IsInArchive(m_strPath) ||
                                (HasVideoInfoTag() && GetVideoInfoTag()->m_iDbId > 0 &&
                                 !CMediaTypes::IsContainer(GetVideoInfoTag()->m_type))))
   {
-    std::string name2{strMovieName};
-    URIUtils::GetParentPath(name2, strMovieName);
-    if (URIUtils::IsInArchive(m_strPath))
-    {
-      // Try to get archive itself, if empty take path before
-      name2 = GetURL().GetHostName();
-      if (name2.empty())
-        name2 = strMovieName;
+    const std::string name{strMovieName};
+    URIUtils::GetParentPath(name, strMovieName);
+  }
+  if (strMovieName.empty())
+    return strMovieName;
 
-      URIUtils::GetParentPath(name2, strMovieName);
+  const CURL url{strMovieName};
+  if (URIUtils::IsInArchive(strMovieName) || URIUtils::IsArchive(url))
+  {
+    // Try to get archive itself, if empty take path before
+    std::string name{url.GetHostName()};
+    if (name.empty())
+      name = strMovieName;
+    if (bUseFolderNames)
+    {
+      if (!URIUtils::GetParentPath(name, strMovieName))
+        strMovieName = name;
     }
+    else
+      strMovieName = name;
   }
 
   // Remove any trailing 'Disc n' and disc path (VIDEO_TS or BDMV) to get actual movie title
-  strMovieName = CUtil::RemoveTrailingPartNumberSegmentFromPath(
-      strMovieName,
-      bUseFolderNames ? CUtil::PreserveFileName::REMOVE : CUtil::PreserveFileName::KEEP);
+  if (!URIUtils::IsStack(strMovieName))
+  {
+    strMovieName = CUtil::RemoveTrailingPartNumberSegmentFromPath(
+        strMovieName,
+        bUseFolderNames ? CUtil::PreserveFileName::REMOVE : CUtil::PreserveFileName::KEEP);
+  }
 
   return strMovieName;
 }
 
+// Used to determine the location of nfo files and artwork
 std::string CFileItem::GetLocalMetadataPath() const
 {
   if (IsFolder() && !IsFileFolder())
@@ -1969,7 +2005,8 @@ bool CFileItem::LoadMusicTag()
     const int iTrack = GetMusicInfoTag()->GetTrackNumber();
     if (iTrack >= 1)
     {
-      std::string strText = g_localizeStrings.Get(554); // "Track"
+      std::string strText =
+          CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(554); // "Track"
       if (!strText.empty() && strText[strText.size() - 1] != ' ')
         strText += " ";
       const std::string strTrack = StringUtils::Format((strText + "{}"), iTrack);
