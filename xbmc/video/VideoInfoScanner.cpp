@@ -160,7 +160,8 @@ void AddLocalItemArtwork(KODI::ART::Artwork& itemArt,
                          const std::vector<std::string>& wantedArtTypes,
                          const std::string& itemPath,
                          bool addAll,
-                         bool exactName)
+                         bool exactName,
+                         bool isInFolder)
 {
   std::string path = URIUtils::GetDirectory(itemPath);
   if (path.empty())
@@ -189,7 +190,7 @@ void AddLocalItemArtwork(KODI::ART::Artwork& itemArt,
                          (caseSensitive ? StringUtils::StartsWith(candidate, baseFilename)
                                         : StringUtils::StartsWithNoCase(candidate, baseFilename))};
 
-    if (!baseFilename.empty() && !matchesFilename)
+    if (!baseFilename.empty() && !matchesFilename && !isInFolder)
       continue;
 
     if (matchesFilename)
@@ -487,7 +488,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
 
         // force sorting consistency to avoid hash mismatch between platforms
         // sort by filename as always present for any files, but keep case sensitivity
-        items.Sort(SortByFile, SortOrderAscending, SortAttributeNone);
+        items.Sort(SortByFile, SortOrder::ASCENDING, SortAttributeNone);
 
         // check whether to re-use previously computed fast hash
         if (!CanFastHash(items, regexps) || fastHash.empty())
@@ -537,7 +538,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
 
         // force sorting consistency to avoid hash mismatch between platforms
         // sort by filename as always present for any files, but keep case sensitivity
-        items.Sort(SortByFile, SortOrderAscending, SortAttributeNone);
+        items.Sort(SortByFile, SortOrder::ASCENDING, SortAttributeNone);
 
         GetPathHash(items, hash);
         bSkip = true;
@@ -662,7 +663,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
       // Look for local art files first
       const std::vector<std::string> movieSetArtTypes =
           CVideoThumbLoader::GetArtTypes(MediaTypeVideoCollection);
-      AddLocalItemArtwork(movieSetArt, movieSetArtTypes, movieSetInfoPath, true, false);
+      AddLocalItemArtwork(movieSetArt, movieSetArtTypes, movieSetInfoPath, true, false, true);
 
       // If art specified in set.nfo use that next
       if (movieSetArt.empty() && tag.m_set.HasArt())
@@ -1330,7 +1331,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
         {
           // force sorting consistency to avoid hash mismatch between platforms
           // sort by filename as always present for any files, but keep case sensitivity
-          items.Sort(SortByFile, SortOrderAscending, SortAttributeNone);
+          items.Sort(SortByFile, SortOrder::ASCENDING, SortAttributeNone);
           GetPathHash(items, hash);
           if (StringUtils::EqualsNoCase(dbHash, hash))
           {
@@ -1381,7 +1382,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
     */
 
     // since we're doing this now anyway, should other items be stacked?
-    items.Sort(SortByPath, SortOrderAscending);
+    items.Sort(SortByPath, SortOrder::ASCENDING);
 
     // If found VIDEO_TS.IFO or INDEX.BDMV then we are dealing with Blu-ray or DVD files on disc
     // somewhere in the directory tree. Assume that all other files/folders in the same folder
@@ -2188,7 +2189,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
           std::string filename = ART::GetLocalArtBaseFilename(*pItem, useFolder);
           std::string directory = URIUtils::GetDirectory(filename);
           if (filename != directory)
-            AddLocalItemArtwork(art, artTypes, filename, addAll, exactName);
+            AddLocalItemArtwork(art, artTypes, filename, addAll, exactName, bApplyToDir);
         }
 
         // Reset useFolder to false as GetLocalArtBaseFilename may modify it in
@@ -2212,7 +2213,7 @@ CVideoInfoScanner::~CVideoInfoScanner()
         }
         else
           path = ART::GetLocalArtBaseFilename(*pItem, useFolder);
-        AddLocalItemArtwork(art, artTypes, path, addAll, exactName);
+        AddLocalItemArtwork(art, artTypes, path, addAll, exactName, bApplyToDir);
       }
 
       if (moviePartOfSet)
@@ -2221,7 +2222,8 @@ CVideoInfoScanner::~CVideoInfoScanner()
         if (!movieSetInfoPath.empty())
         {
           KODI::ART::Artwork movieSetArt;
-          AddLocalItemArtwork(movieSetArt, movieSetArtTypes, movieSetInfoPath, addAll, exactName);
+          AddLocalItemArtwork(movieSetArt, movieSetArtTypes, movieSetInfoPath, addAll, exactName,
+                              true);
           for (const auto& artItem : movieSetArt)
           {
             art["set." + artItem.first] = artItem.second;
@@ -2779,9 +2781,8 @@ CVideoInfoScanner::~CVideoInfoScanner()
         else
           basePath = StringUtils::Format("season{:02}", season);
 
-        AddLocalItemArtwork(art, artTypes,
-          URIUtils::AddFileToFolder(show.m_strPath, basePath),
-          addAll, exactName);
+        AddLocalItemArtwork(art, artTypes, URIUtils::AddFileToFolder(show.m_strPath, basePath),
+                            addAll, exactName, false);
 
         seasonArt[season] = art;
       }

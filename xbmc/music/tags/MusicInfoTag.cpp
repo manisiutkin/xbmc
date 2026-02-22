@@ -270,7 +270,7 @@ const ReplayGain& CMusicInfoTag::GetReplayGain() const
   return m_replayGain;
 }
 
-CAlbum::ReleaseType CMusicInfoTag::GetAlbumReleaseType() const
+ReleaseType CMusicInfoTag::GetAlbumReleaseType() const
 {
   return m_albumReleaseType;
 }
@@ -327,7 +327,7 @@ const std::string& CMusicInfoTag::GetSongVideoURL() const
   return m_songVideoURL;
 }
 
-const ChapterMarks& CMusicInfoTag::GetChapterMarks() const
+const std::vector<ChapterDetails>& CMusicInfoTag::GetChapterMarks() const
 {
   return m_chapters;
 }
@@ -761,7 +761,7 @@ void CMusicInfoTag::SetReplayGain(const ReplayGain& aGain)
   m_replayGain = aGain;
 }
 
-void CMusicInfoTag::SetAlbumReleaseType(CAlbum::ReleaseType releaseType)
+void CMusicInfoTag::SetAlbumReleaseType(ReleaseType releaseType)
 {
   m_albumReleaseType = releaseType;
 }
@@ -788,7 +788,7 @@ void CMusicInfoTag::SetSongVideoURL(std::string_view songVideoURL)
   m_songVideoURL = songVideoURL;
 }
 
-void CMusicInfoTag::SetChapterMarks(const ChapterMarks& chapters)
+void CMusicInfoTag::SetChapterMarks(const std::vector<ChapterDetails>& chapters)
 {
   m_chapters = chapters;
 }
@@ -1155,7 +1155,7 @@ void CMusicInfoTag::Archive(CArchive& ar)
 
     int albumReleaseType;
     ar >> albumReleaseType;
-    m_albumReleaseType = static_cast<CAlbum::ReleaseType>(albumReleaseType);
+    m_albumReleaseType = static_cast<ReleaseType>(albumReleaseType);
     ar >> m_iBPM;
     ar >> m_samplerate;
     ar >> m_bitrate;
@@ -1204,7 +1204,7 @@ void CMusicInfoTag::Clear()
   m_iAlbumId = -1;
   m_coverArt.Clear();
   m_replayGain = ReplayGain();
-  m_albumReleaseType = CAlbum::Album;
+  m_albumReleaseType = ReleaseType::Album;
   m_listeners = 0;
   m_Rating = 0;
   m_Userrating = 0;
@@ -1312,13 +1312,12 @@ std::string CMusicInfoTag::GetContributorsAndRolesText() const
   return StringUtils::TrimRight(strLabel, "\n");
 }
 
-
-const VECMUSICROLES &CMusicInfoTag::GetContributors()  const
+const std::vector<CMusicRole>& CMusicInfoTag::GetContributors() const
 {
   return m_musicRoles;
 }
 
-void CMusicInfoTag::SetContributors(const VECMUSICROLES& contributors)
+void CMusicInfoTag::SetContributors(const std::vector<CMusicRole>& contributors)
 {
   m_musicRoles = contributors;
 }

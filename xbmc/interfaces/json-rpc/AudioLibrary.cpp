@@ -186,7 +186,8 @@ JSONRPC_STATUS CAudioLibrary::GetArtistDetails(const std::string &method, ITrans
 
   CFileItemList items;
   CDatabase::Filter filter;
-  if (!musicdatabase.GetArtistsByWhere(musicUrl.ToString(), filter, items) || items.Size() != 1)
+  if (!musicdatabase.GetArtistsByWhere(musicUrl.ToString(), items, SortDescription(), filter) ||
+      items.Size() != 1)
     return InvalidParams;
 
   // Add "artist" to "properties" array by default
@@ -517,18 +518,17 @@ JSONRPC_STATUS CAudioLibrary::GetRecentlyAddedAlbums(const std::string &method, 
   if (!musicdatabase.Open())
     return InternalError;
 
-  VECALBUMS albums;
+  std::vector<CAlbum> albums;
   if (!musicdatabase.GetRecentlyAddedAlbums(albums))
     return InternalError;
 
   CFileItemList items;
-  for (unsigned int index = 0; index < albums.size(); index++)
+  for (const CAlbum& album : albums)
   {
-    std::string path =
-        StringUtils::Format("musicdb://recentlyaddedalbums/{}/", albums[index].idAlbum);
+    std::string path = StringUtils::Format("musicdb://recentlyaddedalbums/{}/", album.idAlbum);
 
     CFileItemPtr item;
-    FillAlbumItem(albums[index], path, item);
+    FillAlbumItem(album, path, item);
     items.Add(item);
   }
 
@@ -568,18 +568,17 @@ JSONRPC_STATUS CAudioLibrary::GetRecentlyPlayedAlbums(const std::string &method,
   if (!musicdatabase.Open())
     return InternalError;
 
-  VECALBUMS albums;
+  std::vector<CAlbum> albums;
   if (!musicdatabase.GetRecentlyPlayedAlbums(albums))
     return InternalError;
 
   CFileItemList items;
-  for (unsigned int index = 0; index < albums.size(); index++)
+  for (const CAlbum& album : albums)
   {
-    std::string path =
-        StringUtils::Format("musicdb://recentlyplayedalbums/{}/", albums[index].idAlbum);
+    std::string path = StringUtils::Format("musicdb://recentlyplayedalbums/{}/", album.idAlbum);
 
     CFileItemPtr item;
-    FillAlbumItem(albums[index], path, item);
+    FillAlbumItem(album, path, item);
     items.Add(item);
   }
 
@@ -1147,7 +1146,8 @@ bool CAudioLibrary::FillFileItemList(const CVariant &parameterObject, CFileItemL
   }
 
   if (artistID != -1 || albumID != -1 || genreID != -1)
-    success |= musicdatabase.GetSongsNav("musicdb://songs/", list, genreID, artistID, albumID);
+    success |= musicdatabase.GetSongsNav("musicdb://songs/", list, SortDescription(), genreID,
+                                         artistID, albumID);
 
   int songID = (int)parameterObject["songid"].asInteger(-1);
   if (songID != -1)
@@ -1165,15 +1165,22 @@ bool CAudioLibrary::FillFileItemList(const CVariant &parameterObject, CFileItemL
     // If we retrieved the list of songs by "artistid"
     // we sort by album (and implicitly by track number)
     if (artistID != -1)
-      list.Sort(SortByAlbum, SortOrderAscending, CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_FILELISTS_IGNORETHEWHENSORTING) ? SortAttributeIgnoreArticle : SortAttributeNone);
+      list.Sort(SortByAlbum, SortOrder::ASCENDING,
+                CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+                    CSettings::SETTING_FILELISTS_IGNORETHEWHENSORTING)
+                    ? SortAttributeIgnoreArticle
+                    : SortAttributeNone);
     // If we retrieve the list of songs by "genreid"
     // we sort by artist (and implicitly by album and track number)
     else if (genreID != -1)
-      list.Sort(SortByArtist, SortOrderAscending, CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_FILELISTS_IGNORETHEWHENSORTING) ? SortAttributeIgnoreArticle : SortAttributeNone);
+      list.Sort(SortByArtist, SortOrder::ASCENDING,
+                CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(
+                    CSettings::SETTING_FILELISTS_IGNORETHEWHENSORTING)
+                    ? SortAttributeIgnoreArticle
+                    : SortAttributeNone);
     // otherwise we sort by track number
     else
-      list.Sort(SortByTrackNumber, SortOrderAscending);
-
+      list.Sort(SortByTrackNumber, SortOrder::ASCENDING);
   }
 
   return success;

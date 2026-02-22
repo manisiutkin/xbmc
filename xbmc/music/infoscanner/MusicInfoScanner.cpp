@@ -340,7 +340,7 @@ void CMusicInfoScanner::FetchAlbumInfo(const std::string& strDirectory,
   if (strDirectory.empty())
   {
     m_musicDatabase.Open();
-    m_musicDatabase.GetAlbumsNav("musicdb://albums/", items);
+    m_musicDatabase.GetAlbumsNav("musicdb://albums/", items, SortDescription());
     m_musicDatabase.Close();
   }
   else
@@ -402,7 +402,10 @@ void CMusicInfoScanner::FetchArtistInfo(const std::string& strDirectory,
   if (strDirectory.empty())
   {
     m_musicDatabase.Open();
-    m_musicDatabase.GetArtistsNav("musicdb://artists/", items, !CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_MUSICLIBRARY_SHOWCOMPILATIONARTISTS), -1);
+    const auto settings = CServiceBroker::GetSettingsComponent()->GetSettings();
+    m_musicDatabase.GetArtistsNav(
+        "musicdb://artists/", items, SortDescription(),
+        !settings->GetBool(CSettings::SETTING_MUSICLIBRARY_SHOWCOMPILATIONARTISTS), -1);
     m_musicDatabase.Close();
   }
   else
@@ -507,7 +510,7 @@ bool CMusicInfoScanner::DoScan(const std::string& strDirectory)
   // sort and get the path hash.  Note that we don't filter .cue sheet items here as we want
   // to detect changes in the .cue sheet as well.  The .cue sheet items only need filtering
   // if we have a changed hash.
-  items.Sort(SortByLabel, SortOrderAscending);
+  items.Sort(SortByLabel, SortOrder::ASCENDING);
   std::string hash;
   GetPathHash(items, hash);
 
@@ -528,7 +531,7 @@ bool CMusicInfoScanner::DoScan(const std::string& strDirectory)
 
     // filter items in the sub dir (for .cue sheet support)
     items.FilterCueItems();
-    items.Sort(SortByLabel, SortOrderAscending);
+    items.Sort(SortByLabel, SortOrder::ASCENDING);
 
     // and then scan in the new information from tags
     if (RetrieveMusicInfo(strDirectory, items) > 0)
@@ -631,16 +634,17 @@ static bool SortSongsByTrack(const CSong& song, const CSong& song2)
   return song.iTrack < song2.iTrack;
 }
 
-void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
-                                          VECALBUMS& albums,
-                                          MAPSONGS* songsMap /* = nullptr */)
+void CMusicInfoScanner::FileItemsToAlbums(
+    const CFileItemList& items,
+    std::vector<CAlbum>& albums,
+    std::map<std::string, std::vector<CSong>>* songsMap /* = nullptr */)
 {
   /*
    * Step 1: Convert the FileItems into Songs.
    * If they're MB tagged, create albums directly from the FileItems.
    * If they're non-MB tagged, index them by album name ready for step 2.
    */
-  std::map<std::string, VECSONGS> songsByAlbumNames;
+  std::map<std::string, std::vector<CSong>> songsByAlbumNames;
   for (int i = 0; i < items.Size(); ++i)
   {
     CMusicInfoTag& tag = *items[i]->GetMusicInfoTag();
@@ -650,10 +654,10 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
     if (songsMap != NULL)
     {
       // Match up item to songs in library previously scanned with this path
-      MAPSONGS::iterator songlist = songsMap->find(items[i]->GetPath());
+      auto songlist = songsMap->find(items[i]->GetPath());
       if (songlist != songsMap->end())
       {
-        VECSONGS::iterator foundsong;
+        std::vector<CSong>::iterator foundsong;
         if (songlist->second.size() == 1)
           foundsong = songlist->second.begin();
         else
@@ -681,10 +685,9 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
 
     if (!tag.GetMusicBrainzAlbumID().empty())
     {
-      VECALBUMS::iterator it;
-      for (it = albums.begin(); it != albums.end(); ++it)
-        if (it->strMusicBrainzAlbumID == tag.GetMusicBrainzAlbumID())
-          break;
+      const auto it = std::ranges::find_if(
+          albums, [&tag](const auto& album)
+          { return album.strMusicBrainzAlbumID == tag.GetMusicBrainzAlbumID(); });
 
       if (it == albums.end())
       {
@@ -706,7 +709,7 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
    */
   for (auto& songsByAlbumName : songsByAlbumNames)
   {
-    VECSONGS& songs = songsByAlbumName.second;
+    auto& songs = songsByAlbumName.second;
     // sort the songs by tracknumber to identify duplicate track numbers
     sort(songs.begin(), songs.end(), SortSongsByTrack);
 
@@ -717,7 +720,7 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
     std::string old_DiscSubtitle;
 
     std::map<std::string, std::vector<CSong *> > artists;
-    for (VECSONGS::iterator song = songs.begin(); song != songs.end(); ++song)
+    for (auto song = songs.begin(); song != songs.end(); ++song)
     {
       // test for song overlap
       if (song != songs.begin() && song->iTrack == (song - 1)->iTrack)
@@ -780,8 +783,8 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
                                : "there is more than one unique artist");
       // Clear song artists from artists map, put songs under "various artists" mbid entry
       artists.clear();
-      for (auto& song : songs)
-        artists[VARIOUSARTISTS_MBID].push_back(&song);
+      auto& artist = artists[std::string(VARIOUSARTISTS_MBID)];
+      std::ranges::transform(songs, std::back_inserter(artist), [](auto& song) { return &song; });
     }
 
     /*
@@ -872,7 +875,7 @@ void CMusicInfoScanner::FileItemsToAlbums(const CFileItemList& items,
           artist read from tags when 3a, or the localized value for "various artists" when not 3a.
           This means that tag values are no longer translated into the current language.
           */
-          album.artistCredits.emplace_back(various, VARIOUSARTISTS_MBID);
+          album.artistCredits.emplace_back(various, std::string(VARIOUSARTISTS_MBID));
         else
         {
           album.artistCredits.emplace_back(StringUtils::Trim(common[i]));
@@ -925,7 +928,7 @@ CInfoScanner::InfoRet CMusicInfoScanner::UpdateArtistInfo(CArtist& artist,
 
 int CMusicInfoScanner::RetrieveMusicInfo(const std::string& strDirectory, CFileItemList& items)
 {
-  MAPSONGS songsMap;
+  std::map<std::string, std::vector<CSong>> songsMap;
 
   // get all information for all files in current directory from database, and remove them
   if (m_musicDatabase.RemoveSongsFromPath(strDirectory, songsMap))
@@ -935,7 +938,7 @@ int CMusicInfoScanner::RetrieveMusicInfo(const std::string& strDirectory, CFileI
   if (ScanTags(items, scannedItems) == InfoRet::CANCELLED || scannedItems.Size() == 0)
     return 0;
 
-  VECALBUMS albums;
+  std::vector<CAlbum> albums;
   FileItemsToAlbums(scannedItems, albums, &songsMap);
 
   /*
@@ -979,7 +982,7 @@ int CMusicInfoScanner::RetrieveMusicInfo(const std::string& strDirectory, CFileI
 
     // mark albums without a title as singles
     if (album.strAlbum.empty())
-      album.releaseType = CAlbum::Single;
+      album.releaseType = ReleaseType::Single;
 
     album.strPath = strDirectory;
     m_musicDatabase.AddAlbum(album, m_idSourcePath);
@@ -1102,7 +1105,7 @@ void MUSIC_INFO::CMusicInfoScanner::ScrapeInfoAddedAlbums()
   folder or set later by scraping from NFO files or remote sources).Clearing
   saves caching repeats of the same image.
 */
-void CMusicInfoScanner::FindArtForAlbums(VECALBUMS &albums, const std::string &path)
+void CMusicInfoScanner::FindArtForAlbums(std::vector<CAlbum>& albums, const std::string& path)
 {
   /*
    If there's a single album in the folder, then art can be taken from

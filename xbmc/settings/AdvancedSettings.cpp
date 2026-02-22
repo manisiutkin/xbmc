@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2005-2018 Team Kodi
+ *  Copyright (C) 2005-2026 Team Kodi
  *  This file is part of Kodi - https://kodi.tv
  *
  *  SPDX-License-Identifier: GPL-2.0-or-later
@@ -101,6 +101,16 @@ void CAdvancedSettings::OnSettingsLoaded()
     CLog::Log(LOGINFO, "Disabled debug logging due to GUI setting. Level {}.", m_logLevel);
   }
   CServiceBroker::GetLogging().SetLogLevel(m_logLevel);
+
+  std::vector<AdvancedSettingsCallback> callbacks;
+  {
+    std::lock_guard lock{m_listCritSection};
+    callbacks.reserve(m_settingsLoadedCallbacks.size());
+    std::ranges::transform(m_settingsLoadedCallbacks, std::back_inserter(callbacks),
+                           [](const auto& pair) { return pair.second; });
+  }
+  for (auto& callback : callbacks)
+    callback();
 }
 
 void CAdvancedSettings::OnSettingsUnloaded()
@@ -116,6 +126,20 @@ void CAdvancedSettings::OnSettingChanged(const std::shared_ptr<const CSetting>& 
   const std::string &settingId = setting->GetId();
   if (settingId == CSettings::SETTING_DEBUG_SHOWLOGINFO)
     SetDebugMode(std::static_pointer_cast<const CSettingBool>(setting)->GetValue());
+}
+
+int CAdvancedSettings::RegisterSettingsLoadedCallback(AdvancedSettingsCallback callback)
+{
+  static int idx{0};
+  std::lock_guard lock{m_listCritSection};
+  m_settingsLoadedCallbacks[idx] = callback;
+  return ++idx;
+}
+
+void CAdvancedSettings::UnregisterSettingsLoadedCallback(int handle)
+{
+  std::lock_guard lock{m_listCritSection};
+  m_settingsLoadedCallbacks.erase(handle);
 }
 
 void CAdvancedSettings::Initialize(CSettingsManager& settingsMgr)
@@ -472,7 +496,7 @@ void CAdvancedSettings::Initialize()
   m_iPVRTimeshiftThreshold = 10;
   m_bPVRTimeshiftSimpleOSD = true;
   m_PVRDefaultSortOrder.sortBy = SortByDate;
-  m_PVRDefaultSortOrder.sortOrder = SortOrderDescending;
+  m_PVRDefaultSortOrder.sortOrder = SortOrder::DESCENDING;
 
   m_addonPackageFolderSize = 200;
 
@@ -1232,8 +1256,9 @@ void CAdvancedSettings::ParseSettingsFile(const std::string &file)
       if (validSortMethods.contains(static_cast<SortBy>(sortMethod)))
       {
         int sortOrder;
-        if (XMLUtils::GetInt(pSortDecription, XML_SORTORDER, sortOrder, SortOrderAscending,
-                             SortOrderDescending))
+        if (XMLUtils::GetInt(pSortDecription, XML_SORTORDER, sortOrder,
+                             static_cast<int>(SortOrder::ASCENDING),
+                             static_cast<int>(SortOrder::DESCENDING)))
         {
           m_PVRDefaultSortOrder.sortBy = static_cast<SortBy>(sortMethod);
           m_PVRDefaultSortOrder.sortOrder = static_cast<SortOrder>(sortOrder);

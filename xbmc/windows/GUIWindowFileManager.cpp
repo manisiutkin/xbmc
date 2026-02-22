@@ -357,7 +357,7 @@ void CGUIWindowFileManager::OnSort(int iList)
 
   }
 
-  m_vecItems[iList]->Sort(SortByLabel, SortOrderAscending);
+  m_vecItems[iList]->Sort(SortByLabel, SortOrder::ASCENDING);
 }
 
 void CGUIWindowFileManager::ClearFileItems(int iList)
@@ -484,7 +484,7 @@ bool CGUIWindowFileManager::Update(int iList, const std::string &strDirectory)
     pItem->SetLabel(strLabel);
     pItem->SetLabelPreformatted(true);
     pItem->SetFolder(true);
-    pItem->SetSpecialSort(SortSpecialOnBottom);
+    pItem->SetSpecialSort(SortSpecial::BOTTOM);
     m_vecItems[iList]->Add(pItem);
   }
   else if (items.IsEmpty() || CServiceBroker::GetSettingsComponent()->GetSettings()->GetBool(CSettings::SETTING_FILELISTS_SHOWPARENTDIRITEMS))

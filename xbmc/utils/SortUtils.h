@@ -18,11 +18,12 @@
 
 enum class SortMethod;
 
-typedef enum {
-  SortOrderNone = 0,
-  SortOrderAscending,
-  SortOrderDescending
-} SortOrder;
+enum class SortOrder
+{
+  NONE,
+  ASCENDING,
+  DESCENDING,
+};
 
 typedef enum
 {
@@ -34,11 +35,12 @@ typedef enum
   SortAttributeForceConsiderFolders = 0x10, // overrides SortAttributeIgnoreFolders
 } SortAttribute;
 
-typedef enum {
-  SortSpecialNone     = 0,
-  SortSpecialOnTop    = 1,
-  SortSpecialOnBottom = 2
-} SortSpecial;
+enum class SortSpecial
+{
+  NONE,
+  TOP,
+  BOTTOM
+};
 
 ///
 /// \defgroup List_of_sort_methods List of sort methods
@@ -178,7 +180,7 @@ typedef enum
 
 typedef struct SortDescription {
   SortBy sortBy = SortByNone;
-  SortOrder sortOrder = SortOrderAscending;
+  SortOrder sortOrder = SortOrder::ASCENDING;
   SortAttribute sortAttributes = SortAttributeNone;
   int limitStart = 0;
   int limitEnd = -1;

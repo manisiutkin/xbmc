@@ -48,7 +48,6 @@
 #include "windowing/WinSystem.h"
 
 #include <memory>
-#include <random>
 
 using namespace KODI;
 using namespace KODI::VIDEO;
@@ -1321,12 +1320,16 @@ void CGUIWindowSlideShow::AddFromPath(const std::string &strPath,
   }
 }
 
-void CGUIWindowSlideShow::RunSlideShow(const std::string &strPath,
-                                       bool bRecursive /* = false */, bool bRandom /* = false */,
-                                       bool bNotRandom /* = false */, const std::string &beginSlidePath /* = "" */,
-                                       bool startSlideShow /* = true */, SortBy method /* = SortByLabel */,
-                                       SortOrder order /* = SortOrderAscending */, SortAttribute sortAttributes /* = SortAttributeNone */,
-                                       const std::string &strExtensions)
+void CGUIWindowSlideShow::RunSlideShow(const std::string& strPath,
+                                       bool bRecursive /* = false */,
+                                       bool bRandom /* = false */,
+                                       bool bNotRandom /* = false */,
+                                       const std::string& beginSlidePath /* = "" */,
+                                       bool startSlideShow /* = true */,
+                                       SortBy method /* = SortByLabel */,
+                                       SortOrder order /* = SortOrder::ASCENDING */,
+                                       SortAttribute sortAttributes /* = SortAttributeNone */,
+                                       const std::string& strExtensions)
 {
   // stop any video
   const auto& components = CServiceBroker::GetAppComponents();

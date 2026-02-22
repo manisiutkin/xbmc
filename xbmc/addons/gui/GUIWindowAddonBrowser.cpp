@@ -576,10 +576,10 @@ int CGUIWindowAddonBrowser::SelectAddonID(const std::vector<AddonType>& types,
     item->SetLabel(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(231));
     item->SetLabel2(CServiceBroker::GetResourcesComponent().GetLocalizeStrings().Get(24040));
     item->SetArt("icon", "DefaultAddonNone.png");
-    item->SetSpecialSort(SortSpecialOnTop);
+    item->SetSpecialSort(SortSpecial::TOP);
     items.Add(std::move(item));
   }
-  items.Sort(SortByLabel, SortOrderAscending);
+  items.Sort(SortByLabel, SortOrder::ASCENDING);
 
   if (!addonIDs.empty())
   {
