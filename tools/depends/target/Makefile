@@ -18,12 +18,10 @@ DEPENDS = \
   gnutls \
   gtest \
   harfbuzz \
-  libbluray \
   libffi \
   libgcrypt \
   libgpg-error \
   libjpeg-turbo \
-  liblzo2 \
   libplist \
   libpng \
   libshairplay \
@@ -37,7 +35,6 @@ DEPENDS = \
   pythonmodule-setuptools \
   sqlite3 \
   tinyxml \
-  udfread \
   xz
 
 ifeq ($(ENABLE_GPLV3),yes)
